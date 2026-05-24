@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DogeBot Pro</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#FAFAFA;font-family:'IBM Plex Sans','Segoe UI',sans-serif;}
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-thumb{background:#D0D0D0;border-radius:2px;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+const C={
+  bg:"#FAFAFA",card:"#FFFFFF",border:"#E8E8E8",
+  yellow:"#F0B90B",yellowDark:"#D9A700",yellowLight:"#FFF8E0",
+  green:"#03A66D",greenBg:"#E6FAF4",red:"#CF304A",redBg:"#FDEDF0",
+  text:"#1E2026",sub:"#707A8A",muted:"#B7BDC6",navy:"#0B0E11",
+};
+
+const fmt=(n,d=4)=>Number(n).toFixed(d);
+const fmtUSD=(n)=>`$${Number(n).toFixed(2)}`;
+
+function calcEMA(data,period){
+  const k=2/(period+1);let ema=data[0];const r=[ema];
+  for(let i=1;i<data.length;i++){ema=data[i]*k+ema*(1-k);r.push(ema);}
+  return r;
+}
+function calcRSI(data,period=14){
+  if(data.length<period+1)return Array(data.length).fill(50);
+  const result=Array(period).fill(null);
+  let gains=0,losses=0;
+  for(let i=1;i<=period;i++){const d=data[i]-data[i-1];if(d>=0)gains+=d;else losses-=d;}
+  let ag=gains/period,al=losses/period;
+  result.push(al===0?100:100-100/(1+ag/al));
+  for(let i=period+1;i<data.length;i++){
+    const d=data[i]-data[i-1];
+    ag=(ag*(period-1)+Math.max(d,0))/period;
+    al=(al*(period-1)+Math.max(-d,0))/period;
+    result.push(al===0?100:100-100/(1+ag/al));
+  }
+  return result;
+}
+function generateCandles(count=120){
+  const candles=[];let price=0.18+Math.random()*0.05;const now=Date.now();
+  for(let i=count-1;i>=0;i--){
+    const vol=0.003+Math.random()*0.008,open=price;
+    const change=(Math.random()-0.49)*vol;
+    const close=Math.max(0.01,open+change);
+    const high=Math.max(open,close)+Math.random()*vol*0.5;
+    const low=Math.min(open,close)-Math.random()*vol*0.5;
+    candles.push({t:now-i*5*60*1000,o:open,h:high,l:low,c:close});
+    price=close;
+  }
+  return candles;
+}
+
+function CandleChart({candles,ema5,ema50,ema200,position}){
+  const W=680,H=260,pad={l:52,r:12,t:14,b:28};
+  const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+  if(!candles.length)return null;
+  const visible=candles.slice(-80),ve5=ema5.slice(-80),ve50=ema50.slice(-80),ve200=ema200.slice(-80);
+  const prices=visible.flatMap(c=>[c.h,c.l]);
+  const minP=Math.min(...prices)*0.998,maxP=Math.max(...prices)*1.002,range=maxP-minP;
+  const xS=(i)=>pad.l+(i/(visible.length-1))*cw;
+  const yS=(v)=>pad.t+ch-((v-minP)/range)*ch;
+  const barW=Math.max(3,cw/visible.length-1);
+  const ticks=5;
+  const yTicks=Array.from({length:ticks},(_,i)=>minP+(range/(ticks-1))*i);
+  const lp=(arr)=>arr.map((v,i)=>v==null?null:`${i===0?'M':'L'}${xS(i)},${yS(v)}`).filter(Boolean).join(' ');
+  return(
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:'block'}}>
+      {yTicks.map((v,i)=>(
+        <g key={i}>
+          <line x1={pad.l} x2={W-pad.r} y1={yS(v)} y2={yS(v)} stroke={C.border} strokeWidth="0.5"/>
+          <text x={pad.l-4} y={yS(v)+4} textAnchor="end" fontSize="9" fill={C.sub}>{fmt(v,5)}</text>
+        </g>
+      ))}
+      {visible.map((c,i)=>{
+        const cx=xS(i),bull=c.c>=c.o,color=bull?C.green:C.red;
+        return(
+          <g key={i}>
+            <line x1={cx} x2={cx} y1={yS(c.h)} y2={yS(c.l)} stroke={color} strokeWidth="1"/>
+            <rect x={cx-barW/2} y={yS(Math.max(c.o,c.c))} width={barW}
+              height={Math.max(1,Math.abs(yS(c.o)-yS(c.c)))} fill={color} opacity="0.9"/>
+          </g>
+        );
+      })}
+      <path d={lp(ve5)} fill="none" stroke="#F0B90B" strokeWidth="1.2"/>
+      <path d={lp(ve50)} fill="none" stroke="#3375BB" strokeWidth="1.2"/>
+      <path d={lp(ve200)} fill="none" stroke="#CF304A" strokeWidth="1.5" strokeDasharray="4,2"/>
+      {position&&<line x1={pad.l} x2={W-pad.r} y1={yS(position.entry)} y2={yS(position.entry)}
+        stroke={position.side==='buy'?C.green:C.red} strokeWidth="1" strokeDasharray="6,3" opacity="0.8"/>}
+      <line x1={pad.l} x2={W-pad.r} y1={H-pad.b} y2={H-pad.b} stroke={C.border}/>
+      {[{color:'#F0B90B',label:'EMA 5'},{color:'#3375BB',label:'EMA 50'},{color:'#CF304A',label:'EMA 200',dash:true}].map((l,i)=>(
+        <g key={i} transform={`translate(${pad.l+i*80},6)`}>
+          <line x1="0" x2="16" y1="5" y2="5" stroke={l.color} strokeWidth="1.5" strokeDasharray={l.dash?'4,2':undefined}/>
+          <text x="20" y="9" fontSize="9" fill={C.sub}>{l.label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function RSIChart({rsi}){
+  const W=680,H=72,pad={l:52,r:12,t:4,b:20};
+  const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+  const visible=rsi.slice(-80).filter(v=>v!=null);
+  if(!visible.length)return null;
+  const xS=(i)=>pad.l+(i/(visible.length-1))*cw;
+  const yS=(v)=>pad.t+ch-((v-0)/100)*ch;
+  const path=visible.map((v,i)=>`${i===0?'M':'L'}${xS(i)},${yS(v)}`).join(' ');
+  const curRSI=visible[visible.length-1];
+  return(
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:'block'}}>
+      {[30,65].map(v=>(
+        <g key={v}>
+          <line x1={pad.l} x2={W-pad.r} y1={yS(v)} y2={yS(v)}
+            stroke={v===30?C.green:C.red} strokeWidth="0.7" strokeDasharray="3,2" opacity="0.6"/>
+          <text x={pad.l-4} y={yS(v)+4} textAnchor="end" fontSize="8" fill={C.sub}>{v}</text>
+        </g>
+      ))}
+      <path d={path} fill="none" stroke="#9B59B6" strokeWidth="1.2"/>
+      <text x={W-pad.r} y={yS(curRSI)+4} fontSize="9" fill="#9B59B6" textAnchor="end">{fmt(curRSI,1)}</text>
+      <text x={pad.l-4} y={pad.t+ch/2+4} textAnchor="end" fontSize="8" fill={C.sub}>RSI</text>
+      <line x1={pad.l} x2={W-pad.r} y1={H-pad.b} y2={H-pad.b} stroke={C.border}/>
+    </svg>
+  );
+}
+
+function ConnectModal({exchange,onConnect,onClose}){
+  const [apiKey,setApiKey]=useState('');
+  const [secret,setSecret]=useState('');
+  const [passphrase,setPassphrase]=useState('');
+  const needsPass=['bitget','okx'].includes(exchange?.id);
+  const inp={width:'100%',padding:'8px 12px',border:`1px solid ${C.border}`,borderRadius:4,
+    fontSize:13,outline:'none',background:C.bg,color:C.text,fontFamily:"'IBM Plex Mono',monospace"};
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',
+      alignItems:'center',justifyContent:'center',zIndex:999,padding:16}}>
+      <div style={{background:C.card,borderRadius:12,padding:24,width:'100%',maxWidth:380,
+        boxShadow:'0 8px 40px rgba(0,0,0,0.2)',animation:'fadein 0.2s ease'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <span style={{fontWeight:700,fontSize:16,color:C.text}}>Connect {exchange?.name}</span>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:C.sub,lineHeight:1}}>×</button>
+        </div>
+        {[['API KEY',apiKey,setApiKey,'text','Enter API Key'],
+          ['SECRET KEY',secret,setSecret,'password','Enter Secret Key'],
+          ...(needsPass?[['PASSPHRASE',passphrase,setPassphrase,'password','Enter Passphrase']]:[])]
+          .map(([label,val,setter,type,ph])=>(
+          <div key={label} style={{marginBottom:12}}>
+            <label style={{fontSize:11,color:C.sub,display:'block',marginBottom:4,fontWeight:700}}>{label}</label>
+            <input style={inp} type={type} placeholder={ph} value={val} onChange={e=>setter(e.target.value)}/>
+          </div>
+        ))}
+        <div style={{fontSize:11,color:C.sub,background:C.yellowLight,borderRadius:6,padding:'8px 12px',marginBottom:16}}>
+          ⚠ Use read + trade permissions only. No withdrawal needed.
+        </div>
+        <button onClick={()=>apiKey&&secret&&onConnect({id:exchange.id,name:exchange.name,apiKey,secret,passphrase})}
+          style={{width:'100%',padding:'11px',background:C.yellow,border:'none',borderRadius:6,
+            fontWeight:700,fontSize:14,cursor:'pointer',color:C.navy}}>
+          Connect {exchange?.name}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const EXCHANGES=[
+  {id:'bitget',name:'Bitget',color:'#00E5C1'},
+  {id:'binance',name:'Binance',color:'#F0B90B'},
+  {id:'okx',name:'OKX',color:'#555'},
+  {id:'mexc',name:'MEXC',color:'#00B897'},
+];
+
+function App(){
+  const [candles,setCandles]=useState(()=>generateCandles(120));
+  const [connectedExchange,setConnectedExchange]=useState(null);
+  const [modalExchange,setModalExchange]=useState(null);
+  const [botRunning,setBotRunning]=useState(false);
+  const [position,setPosition]=useState(null);
+  const [balance,setBalance]=useState(1000.00);
+  const [realizedPnL,setRealizedPnL]=useState(0);
+  const [log,setLog]=useState([]);
+  const [signal,setSignal]=useState(null);
+  const tickRef=useRef(null);
+  const posRef=useRef(null);
+  const balRef=useRef(1000);
+  posRef.current=position;
+
+  const closes=candles.map(c=>c.c);
+  const ema5=calcEMA(closes,5);
+  const ema50=calcEMA(closes,50);
+  const ema200=calcEMA(closes,200);
+  const rsiArr=calcRSI(closes,14);
+
+  const last=candles[candles.length-1];
+  const curPrice=last?.c??0;
+  const curEMA5=ema5[ema5.length-1];
+  const curEMA50=ema50[ema50.length-1];
+  const curEMA200=ema200[ema200.length-1];
+  const curRSI=rsiArr[rsiArr.length-1]??50;
+  const prevEMA5=ema5[ema5.length-2];
+  const prevEMA50=ema50[ema50.length-2];
+
+  const uPnL=position
+    ?(position.side==='buy'?(curPrice-position.entry)*position.qty*3:(position.entry-curPrice)*position.qty*3)
+    :0;
+
+  const addLog=useCallback((msg,type='info')=>{
+    setLog(l=>[{t:new Date().toLocaleTimeString('en-IN',{hour12:false}),msg,type},...l].slice(0,50));
+  },[]);
+
+  useEffect(()=>{
+    if(!botRunning||!connectedExchange)return;
+    const uptrend=curEMA5>curEMA200,downtrend=curEMA5<curEMA200;
+    let sig=null;
+    if(uptrend&&curRSI<30)sig='buy';
+    else if(downtrend&&curRSI>65)sig='sell';
+    setSignal(sig);
+
+    // EXIT
+    const pos=posRef.current;
+    if(pos){
+      const ema5Cross=prevEMA5>prevEMA50&&curEMA5<curEMA50;
+      const ema5CrossUp=prevEMA5<prevEMA50&&curEMA5>curEMA50;
+      let exitReason=null;
+      if(pos.side==='buy'&&curPrice<=pos.sl)exitReason='SL';
+      if(pos.side==='sell'&&curPrice>=pos.sl)exitReason='SL';
+      if(pos.side==='buy'&&ema5Cross)exitReason='EMA Cross';
+      if(pos.side==='sell'&&ema5CrossUp)exitReason='EMA Cross';
+      if(exitReason){
+        const pnl=pos.side==='buy'?(curPrice-pos.entry)*pos.qty*3:(pos.entry-curPrice)*pos.qty*3;
+        setRealizedPnL(r=>r+pnl);
+        setBalance(b=>{balRef.current=b+pos.size+pnl;return balRef.current;});
+        addLog(`${exitReason==='SL'?'🔴 SL Hit':'✅ Exit'} ${pos.side.toUpperCase()} @${fmt(curPrice)} | PnL:${pnl>=0?'+':''}${fmtUSD(pnl)}`,pnl>=0?'buy':'sell');
+        setPosition(null);
+        return;
+      }
+    }
+
+    // ENTRY
+    if(!pos&&sig){
+      const tradeSize=balRef.current*0.5;
+      const qty=(tradeSize*3)/curPrice;
+      const slOff=curEMA200*0.005;
+      const sl=sig==='buy'?curEMA200-slOff:curEMA200+slOff;
+      const newPos={side:sig,entry:curPrice,qty,size:tradeSize,sl,leverage:3};
+      setBalance(b=>{balRef.current=b-tradeSize;return balRef.current;});
+      setPosition(newPos);
+      addLog(`${sig==='buy'?'🟢 BUY':'🔴 SELL'} @${fmt(curPrice)} | SL:${fmt(sl)} | Size:${fmtUSD(tradeSize)}`,sig);
+    }
+  },[candles]);
+
+  const tick=useCallback(()=>{
+    setCandles(prev=>{
+      const last=prev[prev.length-1];
+      const vol=0.003+Math.random()*0.006;
+      const change=(Math.random()-0.49)*vol;
+      const newClose=Math.max(0.01,last.c+change);
+      const arr=[...prev];
+      if(Math.random()<0.07){
+        arr.push({t:Date.now(),o:newClose,h:newClose,l:newClose,c:newClose});
+        if(arr.length>150)arr.shift();
+      }else{
+        arr[arr.length-1]={...last,c:newClose,h:Math.max(last.h,newClose),l:Math.min(last.l,newClose)};
+      }
+      return arr;
+    });
+  },[]);
+
+  useEffect(()=>{
+    if(botRunning){tickRef.current=setInterval(tick,800);}
+    else{clearInterval(tickRef.current);}
+    return()=>clearInterval(tickRef.current);
+  },[botRunning,tick]);
+
+  const closePosition=()=>{
+    if(!position)return;
+    const pnl=position.side==='buy'?(curPrice-position.entry)*position.qty*3:(position.entry-curPrice)*position.qty*3;
+    setRealizedPnL(r=>r+pnl);
+    setBalance(b=>{balRef.current=b+position.size+pnl;return balRef.current;});
+    addLog(`🔶 Manual Close ${position.side.toUpperCase()} @${fmt(curPrice)} | PnL:${pnl>=0?'+':''}${fmtUSD(pnl)}`,pnl>=0?'buy':'sell');
+    setPosition(null);
+  };
+
+  const card={background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:14};
+  const tag=(color,bg)=>({background:bg,color:color,borderRadius:4,padding:'2px 8px',fontSize:11,fontWeight:700,display:'inline-block'});
+  const btn=(color,bg,disabled)=>({padding:'10px 18px',background:disabled?C.muted:bg,color:disabled?'#fff':color,
+    border:'none',borderRadius:6,fontWeight:700,fontSize:13,cursor:disabled?'not-allowed':'pointer'});
+
+  return(
+    <div style={{background:C.bg,minHeight:'100vh',color:C.text}}>
+      {/* Header */}
+      <div style={{background:C.navy,padding:'0 16px',display:'flex',alignItems:'center',
+        justifyContent:'space-between',height:52,position:'sticky',top:0,zIndex:10}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:28,height:28,background:C.yellow,borderRadius:'50%',display:'flex',
+            alignItems:'center',justifyContent:'center',fontWeight:900,fontSize:13,color:C.navy}}>⚡</div>
+          <span style={{color:'#fff',fontWeight:700,fontSize:15}}>DogeBot <span style={{color:C.yellow}}>Pro</span></span>
+          <span style={{...tag(C.navy,C.yellow),marginLeft:4}}>3x</span>
+          <span style={{color:C.muted,fontSize:11,marginLeft:4}}>DOGE/USDT·5m</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          {connectedExchange?(
+            <div style={{display:'flex',alignItems:'center',gap:5}}>
+              <div style={{width:7,height:7,borderRadius:'50%',background:C.green,boxShadow:`0 0 6px ${C.green}`}}/>
+              <span style={{color:C.green,fontSize:11,fontWeight:600}}>{connectedExchange.name}</span>
+              <button onClick={()=>setConnectedExchange(null)} style={{background:'none',border:`1px solid ${C.sub}`,
+                borderRadius:4,color:C.sub,fontSize:10,padding:'2px 6px',cursor:'pointer'}}>✕</button>
+            </div>
+          ):(
+            <span style={{color:C.red,fontSize:11,fontWeight:600}}>● Not Connected</span>
+          )}
+        </div>
+      </div>
+
+      <div style={{maxWidth:760,margin:'0 auto',padding:'14px 12px'}}>
+
+        {/* Exchange */}
+        <div style={{...card,marginBottom:10}}>
+          <div style={{fontSize:10,color:C.sub,fontWeight:700,marginBottom:8,letterSpacing:0.8}}>EXCHANGE CONNECTION</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {EXCHANGES.map(ex=>{
+              const isConn=connectedExchange?.id===ex.id;
+              return(
+                <button key={ex.id} onClick={()=>!isConn&&setModalExchange(ex)}
+                  style={{padding:'7px 14px',borderRadius:6,fontWeight:700,fontSize:12,cursor:isConn?'default':'pointer',
+                    border:'1.5px solid',borderColor:isConn?ex.color:C.border,
+                    background:isConn?ex.color+'18':C.bg,color:isConn?ex.color:C.text,
+                    display:'flex',alignItems:'center',gap:5}}>
+                  {isConn&&<span style={{fontSize:9,color:C.green}}>●</span>}
+                  {ex.name}
+                  {!isConn&&<span style={{fontSize:10,color:C.muted}}>+API</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Price Indicators */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+          {[
+            {label:'DOGE/USDT',value:fmt(curPrice,5),sub:curEMA5>curEMA200?'▲ Uptrend':'▼ Downtrend',color:curEMA5>curEMA200?C.green:C.red},
+            {label:'RSI (14)',value:fmt(curRSI,1),sub:curRSI<30?'🟢 Oversold — BUY zone':curRSI>65?'🔴 Overbought — SELL zone':'Neutral',color:curRSI<30?C.green:curRSI>65?C.red:C.sub},
+            {label:'EMA 5 / EMA 200',value:`${fmt(curEMA5,5)} / ${fmt(curEMA200,5)}`,sub:curEMA5>curEMA200?'Bullish crossover':'Bearish crossover',color:curEMA5>curEMA200?C.green:C.red},
+            {label:'EMA 50',value:fmt(curEMA50,5),sub:'Exit trigger level',color:C.sub},
+          ].map((item,i)=>(
+            <div key={i} style={{...card,padding:'11px 13px'}}>
+              <div style={{fontSize:10,color:C.sub,fontWeight:700,marginBottom:3,letterSpacing:0.5}}>{item.label}</div>
+              <div style={{fontSize:13,fontWeight:800,color:C.text,fontFamily:"'IBM Plex Mono',monospace",wordBreak:'break-all'}}>{item.value}</div>
+              <div style={{fontSize:10,color:item.color,marginTop:2,fontWeight:600}}>{item.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Chart */}
+        <div style={{...card,marginBottom:10,padding:'12px 6px 4px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0 8px 8px'}}>
+            <span style={{fontSize:12,fontWeight:700,color:C.text}}>DOGE/USDT — 5m</span>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              {botRunning&&<div style={{display:'flex',alignItems:'center',gap:4}}>
+                <div style={{width:7,height:7,borderRadius:'50%',background:C.green,animation:'pulse 1s infinite'}}/>
+                <span style={{fontSize:10,color:C.green,fontWeight:600}}>LIVE</span>
+              </div>}
+              <span style={{...tag(C.sub,C.bg),border:`1px solid ${C.border}`,fontSize:10}}>5m</span>
+            </div>
+          </div>
+          <CandleChart candles={candles} ema5={ema5} ema50={ema50} ema200={ema200} position={position}/>
+          <RSIChart rsi={rsiArr}/>
+        </div>
+
+        {/* Balance PnL */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:10}}>
+          {[
+            {label:'BALANCE',value:fmtUSD(balance),sub:`Trade size: ${fmtUSD(balance*0.5)}`,color:C.text},
+            {label:'UNREALIZED PnL',value:uPnL===0?'—':(uPnL>=0?'+':'')+fmtUSD(uPnL),sub:position?position.side.toUpperCase()+' open':'No position',color:uPnL>=0?C.green:C.red},
+            {label:'REALIZED PnL',value:realizedPnL===0?'—':(realizedPnL>=0?'+':'')+fmtUSD(realizedPnL),sub:'Closed trades',color:realizedPnL>=0?C.green:C.red},
+          ].map((item,i)=>(
+            <div key={i} style={{...card,padding:'11px 10px'}}>
+              <div style={{fontSize:9,color:C.sub,fontWeight:700,marginBottom:3,letterSpacing:0.5}}>{item.label}</div>
+              <div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:item.color}}>{item.value}</div>
+              <div style={{fontSize:9,color:C.sub,marginTop:2}}>{item.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Open Position */}
+        {position&&(
+          <div style={{...card,marginBottom:10,borderLeft:`3px solid ${position.side==='buy'?C.green:C.red}`,animation:'fadein 0.3s ease'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                  <span style={{...tag(position.side==='buy'?C.green:C.red,position.side==='buy'?C.greenBg:C.redBg),fontSize:12}}>
+                    {position.side==='buy'?'▲ LONG':'▼ SHORT'}
+                  </span>
+                  <span style={{...tag(C.navy,C.yellow)}}>3x</span>
+                  <span style={{fontSize:12,color:C.sub}}>DOGE/USDT</span>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2,auto)',gap:'6px 20px',fontSize:12}}>
+                  {[['Entry',fmt(position.entry,5)],['Current',fmt(curPrice,5)],['Stop Loss',fmt(position.sl,5)],['Size',fmtUSD(position.size)]].map(([k,v])=>(
+                    <div key={k}>
+                      <div style={{color:C.sub,fontSize:10}}>{k}</div>
+                      <div style={{fontWeight:700,fontFamily:'monospace'}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:10,color:C.sub,marginBottom:2}}>Unrealized PnL</div>
+                <div style={{fontSize:18,fontWeight:900,fontFamily:'monospace',color:uPnL>=0?C.green:C.red}}>
+                  {uPnL>=0?'+':''}{fmtUSD(uPnL)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bot Controls */}
+        <div style={{...card,marginBottom:10}}>
+          <div style={{fontSize:10,color:C.sub,fontWeight:700,marginBottom:10,letterSpacing:0.8}}>BOT CONTROLS</div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
+            <button onClick={()=>{
+              if(!connectedExchange){addLog('⚠ Connect exchange first','sell');return;}
+              setBotRunning(r=>!r);
+              addLog(botRunning?'⏹ Bot stopped':'▶ Bot started — DOGE/USDT 5m auto-trading','info');
+            }} style={{...btn('#fff',botRunning?'#CF304A':C.green,false),minWidth:130}}>
+              {botRunning?'⏹ Stop Bot':'▶ Start Bot'}
+            </button>
+            <button onClick={closePosition} disabled={!position}
+              style={{...btn(C.text,C.yellowLight,!position),border:`1.5px solid ${position?C.yellow:C.border}`,minWidth:140}}>
+              ✕ Close Position
+            </button>
+          </div>
+          <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontSize:12}}>
+            <span style={{color:C.sub}}>Signal: </span>
+            <span style={{fontWeight:700,color:signal==='buy'?C.green:signal==='sell'?C.red:C.sub}}>
+              {signal==='buy'?'🟢 BUY — RSI<30 + Uptrend':signal==='sell'?'🔴 SELL — RSI>65 + Downtrend':'— Waiting for signal'}
+            </span>
+            <span style={{color:C.muted,marginLeft:10,fontSize:11}}>
+              Trend: {curEMA5>curEMA200?'↑ UP':'↓ DOWN'}
+            </span>
+            {botRunning&&<span style={{color:C.muted,marginLeft:10,fontSize:10}}>• Auto ON</span>}
+          </div>
+        </div>
+
+        {/* Strategy */}
+        <div style={{...card,marginBottom:10}}>
+          <div style={{fontSize:10,color:C.sub,fontWeight:700,marginBottom:8,letterSpacing:0.8}}>STRATEGY RULES</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:12}}>
+            {[
+              {label:'ENTRY BUY',desc:'EMA5>EMA200 + RSI<30',color:C.green,bg:C.greenBg},
+              {label:'ENTRY SELL',desc:'EMA5<EMA200 + RSI>65',color:C.red,bg:C.redBg},
+              {label:'EXIT BUY',desc:'EMA5 cross below EMA50',color:C.sub,bg:C.bg},
+              {label:'EXIT SELL',desc:'EMA5 cross above EMA50',color:C.sub,bg:C.bg},
+              {label:'SL — BUY',desc:'EMA200 − 0.5%',color:C.red,bg:C.redBg},
+              {label:'SL — SELL',desc:'EMA200 + 0.5%',color:C.red,bg:C.redBg},
+            ].map((r,i)=>(
+              <div key={i} style={{background:r.bg,border:`1px solid ${C.border}`,borderRadius:6,
+                padding:'8px 10px',borderLeft:`3px solid ${r.color}`}}>
+                <div style={{fontSize:10,color:r.color,fontWeight:700,marginBottom:2}}>{r.label}</div>
+                <div style={{color:C.text}}>{r.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Log */}
+        <div style={{...card,marginBottom:10}}>
+          <div style={{fontSize:10,color:C.sub,fontWeight:700,marginBottom:8,letterSpacing:0.8}}>ACTIVITY LOG</div>
+          <div style={{background:C.bg,borderRadius:6,border:`1px solid ${C.border}`,height:150,overflowY:'auto',
+            padding:'8px 10px',fontFamily:"'IBM Plex Mono',monospace",fontSize:11}}>
+            {log.length===0
+              ?<div style={{color:C.muted}}>— Connect exchange and start bot —</div>
+              :log.map((l,i)=>(
+                <div key={i} style={{color:l.type==='buy'?C.green:l.type==='sell'?C.red:C.sub,marginBottom:3}}>
+                  <span style={{color:C.muted}}>[{l.t}] </span>{l.msg}
+                </div>
+              ))
+            }
+          </div>
+        </div>
+
+        <div style={{textAlign:'center',color:C.muted,fontSize:10,padding:'0 0 20px'}}>
+          ⚠ Simulated trading only. Real API at your own risk. Not financial advice.
+        </div>
+      </div>
+
+      {modalExchange&&(
+        <ConnectModal exchange={modalExchange}
+          onConnect={(data)=>{
+            setConnectedExchange(data);setModalExchange(null);
+            setLog([{t:new Date().toLocaleTimeString(),msg:`✅ Connected to ${data.name}`,type:'buy'}]);
+          }}
+          onClose={()=>setModalExchange(null)}/>
+      )}
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>
